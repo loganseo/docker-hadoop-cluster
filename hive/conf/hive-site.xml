@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<configuration>
+
+  <!-- Hive Configuration can either be stored in this file or in the hadoop configuration files  -->
+  <!-- that are implied by Hadoop setup variables.                                                -->
+  <!-- Aside from Hadoop setup variables - this file is provided as a convenience so that Hive    -->
+  <!-- users do not have to edit hadoop configuration files (that may be managed as a centralized -->
+  <!-- resource).                                                                                 -->
+
+  <!-- Hive Execution Parameters -->
+  <property>
+    <!-- Required for automatic metadata sync. -->
+    <name>hive.metastore.dml.events</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <!-- User impala is not authorized to consume notifications by default, disable
+         authentication to work around this. -->
+     <name>hive.metastore.event.db.notification.api.auth</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>hive.metastore.uris</name>
+    <value>thrift://metastore:9083</value>
+  </property>
+
+  <!-- Managed and external tablespaces must live on the Docker volumes that we
+       configure for the cluster. -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>/user/hive/warehouse/managed</value>
+  </property>
+
+  <property>
+    <name>hive.metastore.warehouse.external.dir</name>
+    <value>/user/hive/warehouse/external</value>
+  </property>
+
+  <property>
+    <!-- Required to enable Hive transactions -->
+    <name>hive.support.concurrency</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <!-- Required to enable Hive transactions -->
+    <name>hive.txn.manager</name>
+    <value>org.apache.hadoop.hive.ql.lockmgr.DbTxnManager</value>
+  </property>
+
+  <!-- Hive stats autogathering negatively affects latency of DDL operations, etc and
+       is not particularly useful for Impala -->
+  <property>
+    <name>hive.stats.autogather</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>hive.compactor.initiator.on</name>
+    <value>true</value>
+  </property>
+
+  <property>
+    <name>hive.compactor.worker.threads</name>
+    <value>1</value>
+  </property>
+</configuration>

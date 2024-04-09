@@ -1,0 +1,282 @@
+version: "0.1"
+services:
+## Hadoop ##################################################################
+  namenode:
+    image: apache/hadoop:3.3.6
+    platform: linux/amd64
+    hostname: namenode
+    command: [ "hdfs", "namenode" ]
+    ports:
+      - "0.0.0.0:8020:8020" # namenode rpc
+      - "0.0.0.0:9870:9870" # namenode web ui
+      - "0.0.0.0:14000:14000"
+    env_file:
+      - ./hadoop/hadoop.env
+    environment:
+      ENSURE_NAMENODE_DIR: "/data/dfs/name"
+    volumes:
+      - hadoop-home:/opt/hadoop
+    networks:
+      - hadoop-network
+  datanode:
+    image: apache/hadoop:3.3.6
+    platform: linux/amd64
+    hostname: datanode
+    command: [ "hdfs", "datanode" ]
+    ports:
+      - "0.0.0.0:9864:9864" # datanode web ui
+#      - "0.0.0.0:9866:9866" # data transfer
+    env_file:
+      - ./hadoop/hadoop.env
+    networks:
+      - hadoop-network
+## YARN(Spark) #####################################################################
+  resourcemanager:
+    image: apache/hadoop:3.3.6
+    platform: linux/amd64
+    hostname: resourcemanager
+    command: [ "yarn", "resourcemanager" ]
+    ports:
+        - "0.0.0.0:8088:8088"
+        - "0.0.0.0:8042:8042"
+    env_file:
+      - ./hadoop/hadoop.env
+    networks:
+    - hadoop-network
+  nm01:
+    image: spark3:latest
+    platform: linux/amd64
+    hostname: nodemanager01
+    command: [ "yarn", "nodemanager" ]
+    depends_on:
+      resourcemanager:
+        condition: service_started
+    ports:
+      - "0.0.0.0:18080:18080"
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - ./spark/conf:/opt/spark/conf:ro
+#      - ./spark/ext-lib:/opt/spark/ext-lib:ro
+    networks:
+      - hadoop-network
+  nm02:
+    image: spark3:latest
+    platform: linux/amd64
+    hostname: nodemanager02
+    command: [ "yarn", "nodemanager" ]
+    depends_on:
+      resourcemanager:
+        condition: service_started
+    env_file:
+      - ./hadoop/hadoop.env
+    volumes:
+      - ./spark/conf:/opt/spark/conf:ro
+    networks:
+      - hadoop-network
+  nm03:
+    image: spark3:latest
+    platform: linux/amd64
+    hostname: nodemanager03
+    command: [ "yarn", "nodemanager" ]
+    depends_on:
+      resourcemanager:
+        condition: service_started
+    volumes:
+      - ./spark/conf:/opt/spark/conf:ro
+#      - ./spark/ext-lib:/opt/spark/ext-lib:ro
+    env_file:
+      - ./hadoop/hadoop.env
+    networks:
+      - hadoop-network
+## Jupyter ####################################################################
+  jupyter:
+    image: spark3:latest
+    platform: linux/amd64
+    hostname: jupyter
+    command: "pyspark --master yarn --packages com.databricks:spark-xml_2.12:0.17.0"
+#    command: "pyspark --master yarn --repositories /opt/spark/ext-lib"
+    depends_on:
+      resourcemanager:
+        condition: service_started
+    volumes:
+      - shared-workspace:/opt/workspace
+      - ./spark/ext-lib:/opt/spark/ext-lib:ro
+    env_file:
+      - ./hadoop/hadoop.env
+    ports:
+      - "0.0.0.0:7777:7777"
+    working_dir: /opt/workspace
+    networks:
+      - hadoop-network
+## Kudu ####################################################################
+  kudu-master:
+    image: apache/kudu:1.17.0-ubuntu
+    platform: linux/amd64
+    hostname: kudu-master
+    ports:
+      - "0.0.0.0:7051:7051"
+      - "0.0.0.0:8051:8051"
+    command: [ "master" ]
+    environment:
+      - KUDU_MASTERS=kudu-master:7051
+      - >
+        MASTER_ARGS=-fs_wal_dir=/var/lib/kudu/master
+        --rpc_bind_addresses=0.0.0.0:7051
+        --webserver_port=8051
+        --webserver_doc_root=/opt/kudu/www
+        --stderrthreshold=0
+        --use_hybrid_clock=false
+        --unlock_unsafe_flags=true
+    networks:
+      - hadoop-network
+  kudu-tserver:
+    image: apache/kudu:1.17.0-ubuntu
+    platform: linux/amd64
+    hostname: kudu-tserver
+    depends_on:
+      - kudu-master
+    ports:
+      - "0.0.0.0:7050:7050"
+      - "0.0.0.0:8050:8050"
+    command: [ "tserver" ]
+    environment:
+      - KUDU_MASTERS=kudu-master:7051
+      - >
+        TSERVER_ARGS=--fs_wal_dir=/var/lib/kudu/tserver
+        --rpc_bind_addresses=0.0.0.0:7050
+        --webserver_port=8050
+        --webserver_doc_root=/opt/kudu/www
+        --stderrthreshold=0
+        --use_hybrid_clock=false
+        --unlock_unsafe_flags=true
+    networks:
+      - hadoop-network
+
+## Impala ##################################################################
+  metastore:
+    image: apache/impala:81d5377c2-impala_quickstart_hms
+    platform: linux/amd64
+    hostname: metastore
+    command: [ "hms" ]
+    environment:
+      HADOOP_HOME: /opt/hadoop
+    volumes:
+      - hadoop-home:/opt/hadoop
+      - hive-metastore:/var/lib/hive
+      - hive-metastore:/opt/hive/data/warehouse
+      - ./hive/conf:/opt/hive/conf:ro
+    networks:
+      - hadoop-network
+  statestored:
+    image: apache/impala:81d5377c2-statestored
+    platform: linux/amd64
+    hostname: statestored
+    ports:
+      - "0.0.0.0:25010:25010"
+    command: [ "redirect_stdout_stderr=false", "-logtostderr", "-v=1" ]
+    volumes:
+      - ./hive/conf:/opt/impala/conf:ro
+    networks:
+      - hadoop-network
+  catalogd:
+    depends_on:
+      statestored:
+        condition: service_started
+      metastore:
+        condition: service_started
+    image: apache/impala:81d5377c2-catalogd
+    platform: linux/amd64
+    hostname: catalogd
+    ports:
+      - "0.0.0.0:25020:25020"
+    command: ["-redirect_stdout_stderr=false", "logtostderr", "-v=1",
+              "-hms_event_polling_interval_s=1", "-invalidate_tables_timeout_s=99999"]
+    volumes:
+      - hive-metastore:/opt/hive/data/warehouse
+      - ./hive/conf:/opt/impala/conf:ro
+    networks:
+      - hadoop-network
+  impalad:
+    image: apache/impala:81d5377c2-impalad_coord_exec
+    platform: linux/amd64
+    hostname: impalad
+    depends_on:
+      statestored:
+        condition: service_started
+      catalogd:
+        condition: service_started
+      kudu-master:
+        condition: service_started
+      kudu-tserver:
+        condition: service_started
+    ports:
+      # Beeswax endpoint (deprecated)
+      - "0.0.0.0:21000:21000"
+      # HS2 endpoint
+      - "0.0.0.0:21050:21050"
+      # Web debug UI
+      - "0.0.0.0:25000:25000"
+      # HS2 over HTTP endpoint
+      - "0.0.0.0:28000:28000"
+    command: [
+      "-v=1",
+      "-redirect_stdout_stderr=false",
+      "-logtostderr",
+      "-kudu_master_hosts=kudu-master:7051",
+      "-mt_dop_auto_fallback=true",
+      "-default_query_options=mt_dop=4,default_file_format=parquet,default_transactional_type=insert_only",
+      "-mem_limit=4gb"
+    ]
+    environment:
+      - JAVA_TOOL_OPTIONS="-Xmx2g"
+    volumes:
+      - hive-metastore:/opt/hive/data/warehouse
+      - ./hive/conf:/opt/impala/conf:ro
+    networks:
+      - hadoop-network
+
+## Hue #####################################################################
+  hue-postgres:
+    image: postgres:16.1-alpine3.19
+    platform: linux/amd64
+    hostname: hue-postgres
+    environment:
+      POSTGRES_USER: hue
+      POSTGRES_PASSWORD: hue
+      POSTGRES_DB: hue
+    networks:
+      - hadoop-network
+  hue:
+    image: gethue/hue:20240125-140101
+    platform: linux/amd64
+    hostname: hue
+    depends_on:
+      - hue-postgres
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    ports:
+      - 8888:8888
+    volumes:
+      - ./hue/conf/z-hue.ini:/usr/share/hue/desktop/conf/z-hue.ini
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /usr/share/hue/build/env/bin/hue makemigrations
+        /usr/share/hue/build/env/bin/hue migrate
+        /usr/share/hue/startup.sh
+    networks:
+      - hadoop-network
+
+volumes:
+  hadoop-home:
+  hive-metastore:
+  shared-workspace:
+
+networks:
+  hadoop-network:
+    external: true
